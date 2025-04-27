@@ -2,49 +2,56 @@ name: Update Citations
 
 on:
   schedule:
-    - cron: "0 1 * * *"  # 每天世界标准时间1点跑一次，可以改时间
-  workflow_dispatch:    # 允许手动触发
+    - cron: "0 1 * * *"  # 每天UTC时间1点
+  workflow_dispatch:
 
 jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-    - name: Install scholarly
-      run: pip install scholarly
+      - name: Install requests
+        run: pip install requests
 
-    - name: Fetch citation count and update JSON
-      run: |
-        python <<EOF
-        from scholarly import scholarly
-        import json
+      - name: Fetch citation count from SerpAPI and update JSON
+        env:
+          SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
+        run: |
+          python <<EOF
+          import requests
+          import json
 
-        user_id = "xf1rCgoAAAAJ"
-        author = scholarly.search_author_id(user_id)
-        citations = author['citedby']
+          api_key = "${{ secrets.SERPAPI_API_KEY }}"
+          user_id = "xf1rCgoAAAAJ"
 
-        output = {
-            "schemaVersion": 1,
-            "label": "Citations",
-            "message": str(citations),
-            "color": "blue"
-        }
+          url = f"https://serpapi.com/search.json?engine=google_scholar_author&author_id={user_id}&api_key={api_key}"
+          res = requests.get(url)
+          data = res.json()
 
-        with open('citations.json', 'w') as f:
-            json.dump(output, f, indent=2)
-        EOF
+          citations = data["cited_by"]["table"][0]["citations"]["all"]
 
-    - name: Commit and push changes
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        git add citations.json
-        git commit -m "Update citation count" || echo "No changes to commit"
-        git push
+          output = {
+              "schemaVersion": 1,
+              "label": "Citations",
+              "message": str(citations),
+              "color": "blue"
+          }
+
+          with open('citations.json', 'w') as f:
+              json.dump(output, f, indent=2)
+          EOF
+
+      - name: Commit and push changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add citations.json
+          git commit -m "Update citation count" || echo "No changes to commit"
+          git push
