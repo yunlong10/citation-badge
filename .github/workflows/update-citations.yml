@@ -1,0 +1,50 @@
+name: Update Citations
+
+on:
+  schedule:
+    - cron: "0 1 * * *"  # 每天世界标准时间1点跑一次，可以改时间
+  workflow_dispatch:    # 允许手动触发
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install scholarly
+      run: pip install scholarly
+
+    - name: Fetch citation count and update JSON
+      run: |
+        python <<EOF
+        from scholarly import scholarly
+        import json
+
+        user_id = "xf1rCgoAAAAJ"
+        author = scholarly.search_author_id(user_id)
+        citations = author['citedby']
+
+        output = {
+            "schemaVersion": 1,
+            "label": "Citations",
+            "message": str(citations),
+            "color": "blue"
+        }
+
+        with open('citations.json', 'w') as f:
+            json.dump(output, f, indent=2)
+        EOF
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        git add citations.json
+        git commit -m "Update citation count" || echo "No changes to commit"
+        git push
