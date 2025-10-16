@@ -20,38 +20,57 @@ jobs:
       - name: Install requests
         run: pip install requests
 
-      - name: Fetch citation count from SerpAPI and update JSON
+      - name: Fetch citation count from SerpAPI and update JSONs
         env:
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
         run: |
-          python <<EOF
-          import requests
-          import json
+          python <<'EOF'
+          import requests, json, re
 
           api_key = "${{ secrets.SERPAPI_API_KEY }}"
           user_id = "xf1rCgoAAAAJ"
 
           url = f"https://serpapi.com/search.json?engine=google_scholar_author&author_id={user_id}&api_key={api_key}"
-          res = requests.get(url)
+          res = requests.get(url, timeout=30)
+          res.raise_for_status()
           data = res.json()
 
-          citations = data["cited_by"]["table"][0]["citations"]["all"]
-
-          output = {
-              "schemaVersion": 1,
-              "label": "Citations",
-              "message": str(citations),
-              "color": "blue"
-          }
-
+          # total citations
+          total = data["cited_by"]["table"][0]["citations"]["all"]
           with open('citations.json', 'w') as f:
-              json.dump(output, f, indent=2)
+              json.dump({
+                  "schemaVersion": 1,
+                  "label": "Citations",
+                  "message": str(total),
+                  "color": "blue"
+              }, f, indent=2)
+
+          # per-article citations keyed by article_id (与 entry.google_scholar_id 对应)
+          per_article = {}
+          for a in data.get("articles", []):
+              link = (a.get("link") or "")
+              m = re.search(r'citation_for_view=[^:]+:([^&]+)', link)
+              if m:
+                  article_id = m.group(1)
+              else:
+                  rid = (a.get("result_id") or "")
+                  m2 = re.search(r'^[^:]+:([^:]+)$', rid)
+                  article_id = m2.group(1) if m2 else None
+
+              cb = a.get("cited_by")
+              cited = cb.get("value") if isinstance(cb, dict) else None
+
+              if article_id and isinstance(cited, int):
+                  per_article[article_id] = cited
+
+          with open('per_article_citations.json', 'w') as f:
+              json.dump(per_article, f, indent=2)
           EOF
 
       - name: Commit and push changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add citations.json
-          git commit -m "Update citation count" || echo "No changes to commit"
+          git add citations.json per_article_citations.json
+          git commit -m "Update citation counts (total + per-article)" || echo "No changes to commit"
           git push
