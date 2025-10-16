@@ -1,25 +1,3 @@
-name: Update Citations
-
-on:
-  schedule:
-    - cron: "0 1 * * *"  # 每天UTC时间1点
-  workflow_dispatch:
-
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-
-      - name: Install requests
-        run: pip install requests
-
       - name: Fetch citation count from SerpAPI and update JSONs
         env:
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
@@ -30,12 +8,26 @@ jobs:
           api_key = "${{ secrets.SERPAPI_API_KEY }}"
           user_id = "xf1rCgoAAAAJ"
 
+          # 读取站点仓库的 papers.bib，提取 google_scholar_id 白名单
+          # 如果你的站点主分支是 master，保持 master；如果是 main 改成 main
+          bib_url = "https://raw.githubusercontent.com/yunlong10/yunlong10.github.io/master/_bibliography/papers.bib"
+          allowed_ids = set()
+          try:
+              txt = requests.get(bib_url, timeout=30).text
+              # 匹配 google_scholar_id = {XXXX} 或 google_scholar_id={XXXX}
+              for m in re.finditer(r'google_scholar_id\\s*=\\s*\\{([^}]+)\\}', txt):
+                  allowed_ids.add(m.group(1).strip())
+          except Exception as e:
+              # 若拉取失败，保底为空集合（不输出任何论文），避免误写入
+              allowed_ids = set()
+
+          # 拉 SerpAPI 作者信息
           url = f"https://serpapi.com/search.json?engine=google_scholar_author&author_id={user_id}&api_key={api_key}"
           res = requests.get(url, timeout=30)
           res.raise_for_status()
           data = res.json()
 
-          # 1) 总引用数（保持原 badge 结构）
+          # 总引用数（保持原 badge）
           total = data["cited_by"]["table"][0]["citations"]["all"]
           with open('citations.json', 'w') as f:
               json.dump({
@@ -45,16 +37,14 @@ jobs:
                   "color": "blue"
               }, f, indent=2)
 
-          # 2) 每篇论文的引用数（key 为 Google Scholar 的 article_id，与你站点的 entry.google_scholar_id 一致）
+          # 只输出在 allowed_ids 里的论文
           per_article = {}
           for a in data.get("articles", []):
-              # 先从 link 中解析 citation_for_view=USER:ARTICLEID
               link = (a.get("link") or "")
               m = re.search(r'citation_for_view=[^:]+:([^&]+)', link)
               if m:
                   article_id = m.group(1)
               else:
-                  # 退化到 result_id=USER:ARTICLEID
                   rid = (a.get("result_id") or "")
                   m2 = re.search(r'^[^:]+:([^:]+)$', rid)
                   article_id = m2.group(1) if m2 else None
@@ -62,17 +52,9 @@ jobs:
               cb = a.get("cited_by")
               cited = cb.get("value") if isinstance(cb, dict) else None
 
-              if article_id and isinstance(cited, int):
+              if article_id and isinstance(cited, int) and article_id in allowed_ids:
                   per_article[article_id] = cited
 
           with open('per_article_citations.json', 'w') as f:
               json.dump(per_article, f, indent=2)
           EOF
-
-      - name: Commit and push changes
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add citations.json per_article_citations.json
-          git commit -m "Update citation counts (total + per-article)" || echo "No changes to commit"
-          git push
