@@ -35,7 +35,7 @@ jobs:
           res.raise_for_status()
           data = res.json()
 
-          # total citations
+          # 1) 总引用数（保持原 badge 结构）
           total = data["cited_by"]["table"][0]["citations"]["all"]
           with open('citations.json', 'w') as f:
               json.dump({
@@ -45,14 +45,16 @@ jobs:
                   "color": "blue"
               }, f, indent=2)
 
-          # per-article citations keyed by article_id (与 entry.google_scholar_id 对应)
+          # 2) 每篇论文的引用数（key 为 Google Scholar 的 article_id，与你站点的 entry.google_scholar_id 一致）
           per_article = {}
           for a in data.get("articles", []):
+              # 先从 link 中解析 citation_for_view=USER:ARTICLEID
               link = (a.get("link") or "")
               m = re.search(r'citation_for_view=[^:]+:([^&]+)', link)
               if m:
                   article_id = m.group(1)
               else:
+                  # 退化到 result_id=USER:ARTICLEID
                   rid = (a.get("result_id") or "")
                   m2 = re.search(r'^[^:]+:([^:]+)$', rid)
                   article_id = m2.group(1) if m2 else None
