@@ -2,7 +2,7 @@ name: Update Citations
 
 on:
   schedule:
-    - cron: "0 1 * * *"  # 每天UTC时间1点
+    - cron: "0 */12 * * *"
   workflow_dispatch:
 
 jobs:
@@ -33,14 +33,13 @@ jobs:
           def log(*a):
               print("[update-citations]", *a)
 
-          # 1) 读取你站点的 papers.bib 提取 google_scholar_id（注意分支名 master/main）
+          # 1) Read papers.bib to collect google_scholar_id (check main/master branch)
           bib_url = "https://raw.githubusercontent.com/yunlong10/yunlong10.github.io/master/_bibliography/papers.bib"
           allowed_ids = set()
           try:
               r = requests.get(bib_url, timeout=30)
               r.raise_for_status()
               content = r.text
-              # 支持形态：google_scholar_id = {XXXX} / google_scholar_id={XXXX}
               for m in re.finditer(r'google_scholar_id\s*=\s*\{([^}]+)\}', content):
                   allowed_ids.add(m.group(1).strip())
               log("allowed_ids from papers.bib:", sorted(allowed_ids))
@@ -48,13 +47,12 @@ jobs:
               log("ERROR fetching papers.bib:", e)
               traceback.print_exc()
 
-          # 2) 拉取 SerpAPI 作者数据
+          # 2) Fetch SerpAPI author data
           url = f"https://serpapi.com/search.json?engine=google_scholar_author&author_id={user_id}&api_key={api_key}"
           res = requests.get(url, timeout=30)
           res.raise_for_status()
           data = res.json()
 
-          # 打点：看看 articles
           articles = data.get("articles", []) or []
           log("serpapi articles count:", len(articles))
           if articles:
@@ -64,7 +62,7 @@ jobs:
               log("sample.result_id:", sample.get("result_id"))
               log("sample.cited_by:", sample.get("cited_by"))
 
-          # 3) 总引用数（旧逻辑）
+          # 3) Total citations
           try:
               total = data["cited_by"]["table"][0]["citations"]["all"]
           except Exception:
@@ -73,7 +71,7 @@ jobs:
               json.dump({"schemaVersion": 1, "label": "Citations", "message": str(total), "color": "blue"}, f, indent=2)
           log("wrote citations.json total:", total)
 
-          # 4) 抽取每篇 article_id 与引用数
+          # 4) Per-article citations
           per_article_all = {}
           for a in articles:
               article_id = None
@@ -94,9 +92,7 @@ jobs:
 
           log("extracted article_ids:", sorted(per_article_all.keys()))
 
-          # 5) 过滤策略：
-          #    - 若 allowed_ids 非空 -> 只输出 bib 中的 key
-          #    - 若 allowed_ids 为空 -> 回退输出全部（避免页面空），日志提醒
+          # 5) Filter: if allowed_ids present, keep only those; else fallback to all
           if allowed_ids:
               per_article = {k: v for k, v in per_article_all.items() if k in allowed_ids}
               log("filtered article_ids:", sorted(per_article.keys()))
