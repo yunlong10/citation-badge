@@ -25,49 +25,57 @@ jobs:
           SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
         run: |
           python <<'EOF'
-          import requests, json, re
+          import requests, json, re, traceback
 
           api_key = "${{ secrets.SERPAPI_API_KEY }}"
-          user_id = "xf1rCgoAAAAJ"  # 你的 Google Scholar 用户ID
+          user_id = "xf1rCgoAAAAJ"
 
-          # 从你的网站仓库拉取 papers.bib 并提取所有 google_scholar_id
-          # 如果你的网站主分支不是 master，请把 master 改为实际分支名（如 main）
+          def log(*a):
+              print("[update-citations]", *a)
+
+          # 1) 读取你站点的 papers.bib 提取 google_scholar_id（注意分支名 master/main）
           bib_url = "https://raw.githubusercontent.com/yunlong10/yunlong10.github.io/master/_bibliography/papers.bib"
           allowed_ids = set()
           try:
-              txt = requests.get(bib_url, timeout=30)
-              txt.raise_for_status()
-              content = txt.text
-              # 匹配 google_scholar_id = {XXXX} 或 google_scholar_id={XXXX}
-              for m in re.finditer(r'google_scholar_id\\s*=\\s*\\{([^}]+)\\}', content):
+              r = requests.get(bib_url, timeout=30)
+              r.raise_for_status()
+              content = r.text
+              # 支持形态：google_scholar_id = {XXXX} / google_scholar_id={XXXX}
+              for m in re.finditer(r'google_scholar_id\s*=\s*\{([^}]+)\}', content):
                   allowed_ids.add(m.group(1).strip())
+              log("allowed_ids from papers.bib:", sorted(allowed_ids))
           except Exception as e:
-              # 拉取失败则不写任何 per-article 项，避免误写入
-              allowed_ids = set()
+              log("ERROR fetching papers.bib:", e)
+              traceback.print_exc()
 
-          # 拉取 SerpAPI 作者数据
+          # 2) 拉取 SerpAPI 作者数据
           url = f"https://serpapi.com/search.json?engine=google_scholar_author&author_id={user_id}&api_key={api_key}"
           res = requests.get(url, timeout=30)
           res.raise_for_status()
           data = res.json()
 
-          # 1) 总引用数（保持原 badge 结构）
+          # 打点：看看 articles
+          articles = data.get("articles", []) or []
+          log("serpapi articles count:", len(articles))
+          if articles:
+              sample = articles[0]
+              log("sample.keys:", list(sample.keys()))
+              log("sample.link:", sample.get("link"))
+              log("sample.result_id:", sample.get("result_id"))
+              log("sample.cited_by:", sample.get("cited_by"))
+
+          # 3) 总引用数（旧逻辑）
           try:
               total = data["cited_by"]["table"][0]["citations"]["all"]
           except Exception:
               total = 0
           with open('citations.json', 'w') as f:
-              json.dump({
-                  "schemaVersion": 1,
-                  "label": "Citations",
-                  "message": str(total),
-                  "color": "blue"
-              }, f, indent=2)
+              json.dump({"schemaVersion": 1, "label": "Citations", "message": str(total), "color": "blue"}, f, indent=2)
+          log("wrote citations.json total:", total)
 
-          # 2) 每篇论文引用数，仅输出在 papers.bib 中出现过的 ID
-          per_article = {}
-          for a in data.get("articles", []):
-              # 解析文章的 article_id（与 entry.google_scholar_id 对应）
+          # 4) 抽取每篇 article_id 与引用数
+          per_article_all = {}
+          for a in articles:
               article_id = None
               link = (a.get("link") or "")
               m = re.search(r'citation_for_view=[^:]+:([^&]+)', link)
@@ -81,11 +89,24 @@ jobs:
               cb = a.get("cited_by")
               cited = cb.get("value") if isinstance(cb, dict) else None
 
-              if article_id and isinstance(cited, int) and article_id in allowed_ids:
-                  per_article[article_id] = cited
+              if article_id and isinstance(cited, int):
+                  per_article_all[article_id] = cited
+
+          log("extracted article_ids:", sorted(per_article_all.keys()))
+
+          # 5) 过滤策略：
+          #    - 若 allowed_ids 非空 -> 只输出 bib 中的 key
+          #    - 若 allowed_ids 为空 -> 回退输出全部（避免页面空），日志提醒
+          if allowed_ids:
+              per_article = {k: v for k, v in per_article_all.items() if k in allowed_ids}
+              log("filtered article_ids:", sorted(per_article.keys()))
+          else:
+              log("allowed_ids empty -> fallback to all extracted articles (temporary)")
+              per_article = per_article_all
 
           with open('per_article_citations.json', 'w') as f:
               json.dump(per_article, f, indent=2)
+          log("wrote per_article_citations.json with", len(per_article), "items")
           EOF
 
       - name: Commit and push changes
@@ -93,5 +114,5 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add citations.json per_article_citations.json
-          git commit -m "Update citation counts (total + per-article filtered by papers.bib)" || echo "No changes to commit"
+          git commit -m "Update citation counts (total + per-article, papers.bib filtered with fallback)" || echo "No changes to commit"
           git push
