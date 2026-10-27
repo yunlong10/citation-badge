@@ -34,7 +34,7 @@ jobs:
               print("[update-citations]", *a)
 
           # 1) Read papers.bib to collect google_scholar_id (check main/master branch)
-          bib_url = "https://raw.githubusercontent.com/yunlong10/yunlong10.github.io/master/_bibliography/papers.bib"
+          bib_url = "https://raw.githubusercontent.com/yoloytang/yoloytang.github.io/master/_bibliography/papers.bib"
           allowed_ids = set()
           try:
               r = requests.get(bib_url, timeout=30)
